@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { auth, googleProvider } from '../firebase';
-import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
+// [CHANGED] Added sendEmailVerification and signOut
+import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, signOut } from 'firebase/auth';
 import { Mail, Lock, User, ArrowRight, ShieldCheck, Coins } from 'lucide-react';
 
 const Auth = () => {
@@ -9,12 +10,15 @@ const Auth = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  // [CHANGED] Added a success message state for better UX
+  const [message, setMessage] = useState('');
   const [checking, setChecking] = useState(true);
   const navigate = useNavigate();
 
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged((user) => {
-      if (user) {
+      // [CHANGED] Only redirect if user exists AND email is verified
+      if (user && user.emailVerified) {
         navigate('/app', { replace: true });
       } else {
         setChecking(false);
@@ -37,13 +41,37 @@ const Auth = () => {
   const handleAuth = async (e) => {
     e.preventDefault();
     setError('');
+    setMessage(''); // Clear previous messages
+    
     try {
       if (isLogin) {
-        await signInWithEmailAndPassword(auth, email, password);
+        // --- LOGIN LOGIC ---
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+
+        // [CHANGED] Check if email is verified
+        if (!user.emailVerified) {
+          await signOut(auth); // Log them out immediately
+          throw new Error("Please verify your email before logging in.");
+        }
+        
+        // If verified, the useEffect will handle the redirect
+        
       } else {
-        await createUserWithEmailAndPassword(auth, email, password);
+        // --- SIGNUP LOGIC ---
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        
+        // [CHANGED] Send Verification Email
+        await sendEmailVerification(userCredential.user);
+        
+        // [CHANGED] Sign out immediately so they can't access app yet
+        await signOut(auth);
+        
+        setMessage("Verification link sent to your email! Please verify and log in.");
+        setIsLogin(true); // Switch to login screen
+        setEmail('');     // Optional: Clear fields
+        setPassword('');
       }
-      navigate('/app');
     } catch (err) {
       setError(err.message.replace('Firebase:', '').trim());
     }
@@ -52,6 +80,7 @@ const Auth = () => {
   const handleGoogleLogin = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
+      // Google accounts are automatically verified, so this just works
       navigate('/app');
     } catch (err) {
       setError("Google Sign-In Failed");
@@ -98,6 +127,13 @@ const Auth = () => {
         </div>
 
         <form onSubmit={handleAuth} className="space-y-3">
+          {/* [CHANGED] Display Success Message (Green) */}
+          {message && (
+            <div className="bg-green-500/10 border border-green-500/50 text-green-400 text-xs p-2 rounded-lg text-center">
+              {message}
+            </div>
+          )}
+
           {error && (
             <div className="bg-red-500/10 border border-red-500/50 text-red-400 text-xs p-2 rounded-lg text-center">
               {error}
@@ -216,7 +252,11 @@ const Auth = () => {
           {isLogin ? "Don't have an account? " : "Already have an account? "}
           <button
             type="button"
-            onClick={() => setIsLogin(!isLogin)}
+            onClick={() => {
+                setIsLogin(!isLogin);
+                setError('');
+                setMessage('');
+            }}
             className="font-semibold hover:underline transition-colors"
             style={{ color: '#FFD700' }}
           >
